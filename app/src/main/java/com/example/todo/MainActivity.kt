@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,39 +39,58 @@ import androidx.compose.ui.unit.dp
 import com.example.todo.ui.theme.TodoTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-
-
-data class TodoUiItem(
-    val id: Long,
-    val text: String,
-    val isDone: Boolean
-    )
+import androidx.compose.runtime.collectAsState
+import com.example.todo.data.Todo
+import com.example.todo.data.TodoDatabase
+import com.example.todo.data.TodoRepository
+import com.example.todo.viewmodel.TodoViewModel
+import com.example.todo.viewmodel.TodoViewModelFactory
 
 class MainActivity : ComponentActivity() {
+    private val viewModel: TodoViewModel by viewModels {
+        val database = TodoDatabase.getInstance(this)
+        val repository = TodoRepository(database.todoDao())
+        TodoViewModelFactory(repository)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             TodoTheme {
+                val todos by viewModel.todos.collectAsState()
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    TodoScreen(modifier = Modifier.padding(innerPadding))                }
+                    TodoScreen(
+                        todos = todos,
+                        onAddTodo = {text -> viewModel.addTodos(text) },
+                        onToggleTodo = { todo -> viewModel.toggleTodo(todo) },
+                        onDeleteTodo = { todo -> viewModel.deleteTodo(todo) },
+                        modifier = Modifier.padding(innerPadding)
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun TodoScreen(modifier: Modifier = Modifier) {
-    val todos = remember { mutableStateListOf<TodoUiItem>() }
+fun TodoScreen(
+    todos: List<Todo>,
+    onAddTodo: (String) -> Unit,
+    onToggleTodo: (Todo) -> Unit,
+    onDeleteTodo: (Todo) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // Only local UI state remains here — the text the user is currently typing
     var inputText by rememberSaveable { mutableStateOf("") }
-    var nextId by rememberSaveable { mutableStateOf(0L) }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Top 25%: new todo input area
+        // Top 25%: input area
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -91,14 +111,7 @@ fun TodoScreen(modifier: Modifier = Modifier) {
                 onClick = {
                     val trimmed = inputText.trim()
                     if (trimmed.isNotEmpty()) {
-                        todos.add(
-                            TodoUiItem(
-                                id = nextId,
-                                text = trimmed,
-                                isDone = false
-                            )
-                        )
-                        nextId += 1
+                        onAddTodo(trimmed)   // → ViewModel → Room → StateFlow → recompose
                         inputText = ""
                     }
                 },
@@ -110,7 +123,7 @@ fun TodoScreen(modifier: Modifier = Modifier) {
 
         HorizontalDivider()
 
-        // Bottom 75%: todo list
+        // Bottom 75%: todo list driven by Room via StateFlow
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -135,12 +148,7 @@ fun TodoScreen(modifier: Modifier = Modifier) {
                 ) {
                     Checkbox(
                         checked = todo.isDone,
-                        onCheckedChange = { checked ->
-                            val index = todos.indexOfFirst { it.id == todo.id }
-                            if (index != -1) {
-                                todos[index] = todo.copy(isDone = checked)
-                            }
-                        }
+                        onCheckedChange = { onToggleTodo(todo) }
                     )
 
                     Text(
@@ -148,16 +156,11 @@ fun TodoScreen(modifier: Modifier = Modifier) {
                         modifier = Modifier
                             .weight(1f)
                             .padding(vertical = 12.dp),
-                        textDecoration = if (todo.isDone) {
-                            TextDecoration.LineThrough
-                        } else {
-                            TextDecoration.None
-                        }
+                        textDecoration = if (todo.isDone) TextDecoration.LineThrough
+                        else TextDecoration.None
                     )
 
-                    IconButton(
-                        onClick = { todos.removeAll { it.id == todo.id } }
-                    ) {
+                    IconButton(onClick = { onDeleteTodo(todo) }) {
                         Icon(
                             imageVector = Icons.Filled.Delete,
                             contentDescription = "Delete todo",
@@ -174,6 +177,14 @@ fun TodoScreen(modifier: Modifier = Modifier) {
 @Composable
 fun TodoScreenPreview() {
     TodoTheme {
-        TodoScreen()
+        TodoScreen(
+            todos = listOf(
+                Todo(id = 1, text = "Buy groceries", isDone = false),
+                Todo(id = 2, text = "Walk the dog", isDone = true)
+            ),
+            onAddTodo = {},
+            onToggleTodo = {},
+            onDeleteTodo = {}
+        )
     }
 }
